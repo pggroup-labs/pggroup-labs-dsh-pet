@@ -183,6 +183,29 @@ export function apply(ctx: any): void {
   // 碎碎念生成缓存（按宠物独立）：每只启用的宠物在自己的周期内返回同一句（ts 不变），
   // 同宠物的多个端共享一句、避免重复 LLM 调用（进程内内存态，重启清空）
   const whisperCache = new Map<string, { text: string; ts: number }>();
+  // 碎碎念去重 ring（每宠物最近 16 条，仅内存，重启清空）——喂给模型避免重复表达/笑点/开头
+  const recentWhispers = new Map<string, string[]>();
+  const RECENT_MAX = 16;
+  /** 有限队列：维持最近 RECENT_MAX 条 */
+  const pushRecent = (list: string[], text: string): string[] => [...list, text].slice(-RECENT_MAX);
+  /** 简单字符 n-gram 相似度（0~1）：> 0.55 视为过相似 */
+  const similar = (recent: string[], text: string): boolean => {
+    const set = (s: string): Set<string> => {
+      const out = new Set<string>();
+      const t = s.replace(/\s+/g, '');
+      for (let i = 0; i + 2 <= t.length; i += 2) out.add(t.slice(i, i + 2)); // 字节级 bigram，粗粒度够用
+      return out;
+    };
+    const a = set(text);
+    if (a.size === 0) return false;
+    return recent.some((prev) => {
+      const b = set(prev);
+      if (b.size === 0) return false;
+      let inter = 0;
+      for (const g of a) if (b.has(g)) inter++;
+      return inter / Math.min(a.size, b.size) > 0.55;
+    });
+  };
 
   // 对话记忆文件（唯一读写方 = 本进程；浏览器/桌面两端都只是客户端 → 同一实例天然共享同一份记忆）。
   // 结构双层：{ <种类桶 assetRoot ?? petId>: { <实例 id>: { messages: ChatMemoryMessage[] } } }
@@ -274,10 +297,18 @@ export function apply(ctx: any): void {
     if (!force && cached && now - cached.ts < intervalSec * 1000) {
       return { ok: true, text: cached.text, ts: cached.ts };
     }
-    const result = await generateWhisper(ctx, system);
+    // 去重 ring：最近说过的句子，用于提示模型避免重复；生成后写入并做相似度检查（最多重试 1 次）
+    const recent = recentWhispers.get(petId) ?? [];
+    let result = await generateWhisper(ctx, system, { recent });
+    if (result.ok && recent.length && similar(recent, result.text)) {
+      // 过相似 → 重试 1 次（不无限重试浪费 token）
+      result = await generateWhisper(ctx, system, { recent, topic: undefined });
+      if (result.ok && similar(recent, result.text)) result = { ok: false, reason: 'generate-error', message: '碎碎念去重后仍过于相似' };
+    }
     if (!result.ok) {
       return { ok: false, reason: result.reason, message: result.message };
     }
+    recentWhispers.set(petId, pushRecent(recent, result.text));
     whisperCache.set(petId, { text: result.text, ts: now });
     return { ok: true, text: result.text, ts: now };
   };

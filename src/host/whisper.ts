@@ -20,15 +20,28 @@ export type WhisperGenerateResult =
 /** 单次生成超时（ms）：骈骈念不需要长输出，30s 足够 */
 const TIMEOUT_MS = 30_000;
 
+/** 碎碎念随机 topic 池：让每句有场景锚点，避免同质化。 */
+const TOPICS = [
+  'coding', 'bug', 'AI', 'token', 'work', 'coffee', 'late-night', 'market', 'crypto',
+  'deploy', 'git', 'model thinking', 'meeting', 'weekend', 'money', 'nothing-in-particular',
+];
+
+function pickTopic(): string {
+  return TOPICS[Math.floor(Math.random() * TOPICS.length)];
+}
+
 /**
  * 用当前对话的 provider/model 生成一句碎碎念。
  * @param ctx 宿主上下文（注入 agentDefaultModel / llm）
  * @param system 人设提示词（whisperPrompt）
+ * @param opts.topic 可选 topic seed（缺省随机一个场景）
+ * @param opts.recent 最近说过的文本（去重：提示模型避免重复表达/笑点/开头）
  * @returns 生成的文本，或结构化失败（provider 缺失 / 生成错误）
  */
 export async function generateWhisper(
   ctx: { agentDefaultModel: { currentSelection(): { provider: string; model: string } }; llm?: unknown },
   system: string,
+  opts?: { topic?: string; recent?: string[] },
 ): Promise<WhisperGenerateResult> {
   let sel: { provider: string; model: string };
   try {
@@ -45,19 +58,25 @@ export async function generateWhisper(
     return { ok: false, reason: 'generate-error', message: 'LLM 服务不可用' };
   }
 
+  const topic = opts?.topic ?? pickTopic();
+  const recent = opts?.recent?.length ? opts.recent.slice(-12) : [];
+  const userText =
+    '来一句「' + topic + '」场景的碎碎念，一句就好，8~32 个中文字，短、快、有 punchline。' +
+    (recent.length ? '\n最近说过：\n' + recent.join('\n') + '\n不要重复这些表达、笑点和开头。' : '');
+
   const deadline = AbortSignal.timeout(TIMEOUT_MS);
   const options = {
     provider: sel.provider,
     model: sel.model,
     messages: [
       createUserMessage({
-        content: [{ type: 'text', text: '随便说一句日常碎碎念，一句就好，20 字以内。' }],
+        content: [{ type: 'text', text: userText }],
         source: { kind: 'plugin', plugin: 'dsh-pet' },
       }),
     ],
     system,
-    maxTokens: 60,
-    temperature: 1,
+    maxTokens: 40,
+    temperature: 1.1,
     // 统一关闭深度思考：碎碎念不需要推理，只求随口一句（两适配器均支持 off）
     reasoningEffort: ReasoningEffortId('off'),
     signal: deadline,
