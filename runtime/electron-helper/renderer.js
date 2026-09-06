@@ -261,8 +261,6 @@ class PetSprite {
     this.bubble = document.createElement('div');
     this.bubble.className = 'pet-bubble';
 
-    stage.appendChild(this.videoA);
-    stage.appendChild(this.videoB);
     stage.appendChild(this.hit);
     this.el.appendChild(this.bubble);
     this.el.appendChild(stage);
