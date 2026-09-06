@@ -1,0 +1,4 @@
+﻿node_modules/
+runtime/electron-helper/_frames/
+*.log
+*.tmp
