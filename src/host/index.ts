@@ -63,6 +63,13 @@ const PACKAGE_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 /** 路由前缀 */
 const ROUTE_PREFIX = '/dsh-pet-7340';
 
+/** 内置默认企鹅人设（当宠物无 personaPrompt、条目无 whisperPrompt 时使用）。
+ *  用于碎碎念与桌宠聊天的 system persona；短句 KOL/段子手气质。 */
+const DEFAULT_WHISPER_PROMPT =
+  '你是住在 DeepSeek Harness 桌面里的“小企鹅”：戴红帽、墨镜、黄背心，是一个中文互联网段子手型桌宠。' +
+  '表达像一个长期泡在科技/程序员/AI/市场社区里的嘴碎 KOL：观察敏锐、短句、冷幽默、反差，偶尔损主人一句，但绝不恶意。' +
+  '说话简短自然、一句通常 8~32 个中文字，有画面感和 punchline；不要解释背景，不要解释笑点，不要自称 AI，不要用客服语气，不要每句都叫主人；避免鸡汤、土味情话和幼儿式卖萌。';
+
 /** 不同扩展名对应的 Content-Type 映射 */
 const MIME: Record<string, string> = {
   '.webm': 'video/webm',
@@ -226,12 +233,15 @@ export function apply(ctx: any): void {
 
   // ---- 配置消费：唯一入口 readAllConfig（./config）——返回值绝对正确，这里只读字段，零校验 ----
 
-  /** 某宠物的最终人设 system：所属条目（非文件宠物 → main 条目）的 whisperPrompt（合并器已填默认）
+  /** 某宠物的最终人设 system：宠物级 personaPrompt（可选）→ 所属条目 whisperPrompt → 内置默认，
    *  + 无条件追加一句名字声明（name，缺失已按 id）——碎碎念与对话共用同一拼装。 */
   const petSystemPrompt = (petId: string, cfg: Record<string, Record<string, unknown>>): string => {
     const found = findPetInstance(cfg, petId);
     const conf = found ? found.conf : (cfg.main ?? {});
-    const prompt = typeof conf.whisperPrompt === 'string' ? conf.whisperPrompt : '';
+    // 宠物级 personaPrompt 优先；其次条目级 whisperPrompt；再回落内置默认企鹅人设
+    const petPrompt = found && typeof found.pet.personaPrompt === 'string' ? (found.pet.personaPrompt as string) : '';
+    const entryPrompt = typeof conf.whisperPrompt === 'string' ? (conf.whisperPrompt as string) : '';
+    const prompt = petPrompt || entryPrompt || DEFAULT_WHISPER_PROMPT;
     const name = found ? String(found.pet.name || found.pet.id || petId) : petId;
     const nameLine = '你的名字是“' + name + '”。';
     return prompt ? prompt + '\n' + nameLine : nameLine;
@@ -340,12 +350,19 @@ export function apply(ctx: any): void {
   };
   refreshDesktop();
 
-  /** 桌面可见宠物列表（[{id,size}]）：透传 Helper 决定创建几个局部窗口（每宠物一个）。 */
-  const desktopPetList = (): Array<{ id: string; size: number }> => {
+  /** 桌面可见宠物列表（[{id,size,aspect?,image?,media?}]）：透传 Helper 决定创建几个局部窗口（每宠物一个）。
+   *  aspect/image/media 一并透传：静态图宠物按素材比例开窗 + 渲染为 PNG 池，避免被 16:9 窗口裁切/误当 video。 */
+  const desktopPetList = (): Array<{ id: string; size: number; aspect?: number; image?: string; media?: 'image' | 'video' }> => {
     try {
       return effectivePetList()
         .filter((p) => isDesktopVisible(p.display))
-        .map((p) => ({ id: String(p.id), size: Number(p.size) }));
+        .map((p) => ({
+          id: String(p.id),
+          size: Number(p.size),
+          aspect: typeof p.aspect === 'number' && p.aspect > 0 ? p.aspect : undefined,
+          image: typeof p.image === 'string' && p.image ? p.image : undefined,
+          media: p.media === 'image' || p.media === 'video' ? p.media : undefined,
+        }));
     } catch {
       return [];
     }
@@ -706,8 +723,9 @@ export function apply(ctx: any): void {
     }
     const fileName = nameParts.join('/');
     const ext = fileName.slice(fileName.lastIndexOf('.')).toLowerCase();
-    if (ext !== '.webm') {
-      return { kind: 'text', status: 400, body: 'dsh-pet: unsupported animation format (expected .webm)' };
+    // 播放/发布格式：webm（VP9-alpha）为主；额外放行 .png —— 静态图宠物（部分 pet-pack 换皮）以单张透明图渲染。
+    if (ext !== '.webm' && ext !== '.png') {
+      return { kind: 'text', status: 400, body: 'dsh-pet: unsupported animation format (expected .webm or .png)' };
     }
     // 素材归属（按是否存在该宠物的独立素材目录判定，绝不静默混用）：
     //   - 存在 `pet/<petId>-animation/`（pet pack 宠物，URL 段 = 素材根 assetRoot）：

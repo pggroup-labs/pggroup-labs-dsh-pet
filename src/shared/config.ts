@@ -26,11 +26,13 @@ export function flattenConfigPets(merged: Record<string, Record<string, unknown>
     for (const p of list) {
       out.push({
         ...p,
-        animations: conf.animations as Animations | undefined,
-        animationWeights: conf.animationWeights as Weights | undefined,
+        // 静态图宠物/换皮在实例级自带独立动画池；否则回落条目级（女仆等主宠物）。
+        animations: (p.animations ?? conf.animations) as Animations | undefined,
+        animationWeights: (p.animationWeights ?? conf.animationWeights) as Weights | undefined,
         eventsRefreshSec: conf.eventsRefreshSec as Record<string, number> | undefined,
         physics: conf.physics as PhysicsParams | undefined,
-        assetRoot: entry,
+        // 实例级 assetRoot（静态图/多物种）优先于条目 key；否则回落条目 key（= 素材根）
+        assetRoot: (p.assetRoot ?? entry),
         extra: entry !== 'main',
       });
     }

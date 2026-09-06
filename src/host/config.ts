@@ -326,6 +326,21 @@ function mergePet(
   const name = rawName || id;
   if (!rawName) warnOnce(`${label}:name:${id}`, `宠物「${id}」缺少 name，已按 id 处理`);
 
+  // 可选实例级字段（静态图宠物/换皮/多物种）：assetRoot / image / aspect / 自有动画池 / 权重 / 媒体类型 / 人设
+  const optStr = (v: unknown): string | undefined =>
+    typeof v === 'string' && v.trim() && !ID_FORBIDDEN.test(v.trim()) ? v.trim() : undefined;
+  const optAspect = (v: unknown): number | undefined => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0.05 && n < 20 ? n : undefined;
+  };
+  const assetRoot = optStr(p.assetRoot);
+  const image = optStr(p.image);
+  const aspect = optAspect(p.aspect);
+  const ownAnimsValid = animationsValid(p.animations);
+  const ownWeightsValid = weightsValid(p.animationWeights);
+  const media = p.media === 'image' || p.media === 'video' ? p.media : undefined;
+  const personaPrompt = typeof p.personaPrompt === 'string' && p.personaPrompt.trim() ? p.personaPrompt.trim() : undefined;
+
   // position：逐子字段合并（缺失 → 静默取默认；显式写但非法 → 告警 + 默认）
   const basePos = base.position && typeof base.position === 'object' ? (base.position as Record<string, unknown>) : {};
   const ownPos = p.position && typeof p.position === 'object' ? (p.position as Record<string, unknown>) : {};
@@ -342,6 +357,13 @@ function mergePet(
       marginX: petNumber(ownPos.marginX, basePos.marginX, -Infinity, label, 'position.marginX', id),
       marginY: petNumber(ownPos.marginY, basePos.marginY, -Infinity, label, 'position.marginY', id),
     },
+    ...(assetRoot ? { assetRoot } : {}),
+    ...(image ? { image } : {}),
+    ...(aspect !== undefined ? { aspect } : {}),
+    ...(ownAnimsValid ? { animations: p.animations } : {}),
+    ...(ownWeightsValid ? { animationWeights: p.animationWeights } : {}),
+    ...(media ? { media } : {}),
+    ...(personaPrompt ? { personaPrompt } : {}),
   };
 }
 
@@ -440,7 +462,27 @@ export function saveUserConfig(
     const marginX = Number(pos.marginX);
     const marginY = Number(pos.marginY);
     if (!Number.isFinite(marginX) || !Number.isFinite(marginY)) return null;
-    out.push({ id, name, size, balanceEnabled, whisperEnabled, display, position: { corner, marginX, marginY } });
+    const outPet: Record<string, unknown> = {
+      id,
+      name,
+      size,
+      balanceEnabled,
+      whisperEnabled,
+      display,
+      position: { corner, marginX, marginY },
+    };
+    // 可选静态图/换皮/多物种字段：显式且合法则透传保留
+    if (typeof pp.assetRoot === 'string' && pp.assetRoot.trim() && !ID_FORBIDDEN.test(pp.assetRoot)) {
+      outPet.assetRoot = pp.assetRoot.trim();
+    }
+    if (typeof pp.image === 'string' && pp.image.trim() && !ID_FORBIDDEN.test(pp.image)) outPet.image = pp.image.trim();
+    const aspect = Number(pp.aspect);
+    if (Number.isFinite(aspect) && aspect > 0.05 && aspect < 20) outPet.aspect = aspect;
+    if (animationsValid(pp.animations)) outPet.animations = pp.animations;
+    if (weightsValid(pp.animationWeights)) outPet.animationWeights = pp.animationWeights;
+    if (pp.media === 'image' || pp.media === 'video') outPet.media = pp.media;
+    if (typeof pp.personaPrompt === 'string' && pp.personaPrompt.trim()) outPet.personaPrompt = pp.personaPrompt.trim();
+    out.push(outPet);
   }
   const ne = o.notificationsEnabled;
   if (ne !== undefined && typeof ne !== 'boolean') return null;

@@ -88,6 +88,17 @@ export interface Pet {
   animationWeights?: Weights;
   extra?: boolean;
   assetRoot?: string;
+  /** 静态形象资产（可选）：非空时该宠物以单张透明图渲染（对某些 pet-pack 用），经
+   *  /dsh-pet-7340/thumb/<assetRoot>/<image> 提供。缺省走 webm 动画池。 */
+  image?: string;
+  /** 媒体类型：'image' = 静态 PNG 池（部分 pet-pack）；'video' = 原生 webm 动画（默认）。
+   *  所有姿态共享同一固定 stage（size × aspect），切换只换 asset，不跳尺寸/位置。 */
+  media?: 'image' | 'video';
+  /** 渲染宽高比（height/width）：stage 高 = size × aspect。默认 9/16；静态图宠物按素材自然比例。 */
+  aspect?: number;
+  /** 宠物级人设（可选）：用于碎碎念/桌宠聊天的 system persona。
+   *  fallback 链：pet.personaPrompt → 条目级 whisperPrompt → 内置默认。 */
+  personaPrompt?: string;
   /** 渲染派生：所属条目的刷新周期（秒，事件名 → 间隔；合并时已填默认值） */
   eventsRefreshSec?: Record<string, number>;
   /** 条目级：拖拽抛掷物理参数（全局共用；host 合并已填默认，拍平时吹入） */

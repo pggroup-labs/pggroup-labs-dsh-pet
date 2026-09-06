@@ -1,25 +1,26 @@
 {
   "name": "dsh-pet",
-  "version": "0.2.5",
-  "description": "A floating desktop pet for the DeepSeek Harness Web UI: idle breathing, occasional direction turns, random actions, and screen wandering.",
+  "version": "0.3.0",
+  "description": "A floating desktop penguin pet (小企鹅) for the DeepSeek Harness Web UI: idle/micro-motion, random actions, turns, screen wandering, drag/throw physics, right-click actions, balance, and AI 碎碎念 / chat that reuse the running Harness model.",
   "keywords": [
     "dsh",
     "dsh-plugin",
     "deepseek-harness",
     "desktop-pet",
     "pet",
+    "penguin",
     "floating-widget",
     "web-ui",
     "cordis",
     "react"
   ],
-  "homepage": "https://github.com/PC2005-cloud/dsh-pet#readme",
+  "homepage": "https://github.com/pggroup-labs/pggroup-labs-dsh-pet#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/PC2005-cloud/dsh-pet.git"
+    "url": "git+https://github.com/pggroup-labs/pggroup-labs-dsh-pet.git"
   },
   "bugs": {
-    "url": "https://github.com/PC2005-cloud/dsh-pet/issues"
+    "url": "https://github.com/pggroup-labs/pggroup-labs-dsh-pet/issues"
   },
   "_comment": [
     "=============== dsh-pet 包清单说明 ===============",
