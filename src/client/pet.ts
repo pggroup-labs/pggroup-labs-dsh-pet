@@ -70,12 +70,17 @@ const css = [
   '.dsh-pet-root[data-corner="bottom-left"]{left:var(--dsh-pet-mx,24px);bottom:var(--dsh-pet-my,0)}',
   '.dsh-pet-root[data-corner="top-right"]{right:var(--dsh-pet-mx,24px);top:var(--dsh-pet-my,0)}',
   '.dsh-pet-root[data-corner="top-left"]{left:var(--dsh-pet-mx,24px);top:var(--dsh-pet-my,0)}',
-  '.dsh-pet-stage{position:relative;width:var(--dsh-pet-size,462px);height:calc(var(--dsh-pet-size,462px)*9/16);pointer-events:none}',
+  '.dsh-pet-stage{position:relative;width:var(--dsh-pet-size,462px);height:calc(var(--dsh-pet-size,462px)*var(--dsh-pet-aspect,0.5625));pointer-events:none}',
   '.dsh-pet-video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none;opacity:0;transition:opacity .18s ease;transform-origin:center}',
   '.dsh-pet-video.is-front{opacity:1}',
+  // 静态图宠物（换皮/多物种）：双 <img> 交叉淡入；`translate`(微动呼吸) 与 transform(朝向) 独立复合，不冲突。
+  `.dsh-pet-img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none;-webkit-user-drag:none;user-select:none;opacity:0;transition:opacity .18s ease;transform-origin:bottom center;animation:dsh-pet-breathe 3.2s ease-in-out infinite}`,
+  `.dsh-pet-img.is-front{opacity:1}`,
+  // 微动：轻微上下呼吸，让静态图“有生命感”（桌面宠，幅度小）
+  '@keyframes dsh-pet-breathe{0%,100%{translate:0 0}50%{translate:0 -1.5px}}',
   '.dsh-pet-hit{position:absolute;pointer-events:auto;cursor:url("/dsh-pet-7340/pic/cursor-grab.png") 16 16, grab;z-index:1}',
   '.dsh-pet-hit.dragging{cursor:url("/dsh-pet-7340/pic/cursor-grabbing.png") 16 16, grabbing}',
-  '@media (prefers-reduced-motion: reduce){.dsh-pet-video{transition:none}}',
+  '@media (prefers-reduced-motion: reduce){.dsh-pet-video{transition:none}.dsh-pet-img{animation:none}}',
   // 统一右键菜单样式（与桌面注入同一份 MENU_CSS）
   MENU_CSS,
 ].join('\n');
@@ -124,10 +129,15 @@ export function makePetUI(rt: {
   }) {
     // ---- 尺寸（由配置传入；容器/设置页更新后即时跟随）----
     const [size, setSize] = useState(cfg.size);
+    // 宽高比（height/width）：默认 9/16（640×360 素材）；静态图宠物按素材自然比例，避免被压扁
+    const aspect =
+      typeof cfg.aspect === 'number' && cfg.aspect > 0 ? cfg.aspect : cfg.image ? 1 : 9 / 16;
+    // 媒体类型：image = 静态 PNG 池（换皮/多物种）；video = 原生 webm（默认）
+    const media: 'image' | 'video' = cfg.media === 'image' ? 'image' : 'video';
     const halfW = size / 2;
-    const halfH = (size * 9) / 16 / 2;
+    const halfH = (size * aspect) / 2;
     // 舞台脚底垫高（宠物站立于脚底线）：命中框 y、碰撞 body 框、渲染 stage 位移共用
-    const bottomPad = (size * (9 / 16) * (CANVAS_H - FEET_Y)) / CANVAS_H;
+    const bottomPad = (size * aspect * (CANVAS_H - FEET_Y)) / CANVAS_H;
     // 动画池与权重：拍平时已把所属条目的池吹进 cfg（文件宠物自带完整独立池；主宠物用 main 条目
     // 即内置默认池）——成品绝对正确，直接读，不做任何回落
     const petAnims = cfg.animations;
@@ -148,6 +158,8 @@ export function makePetUI(rt: {
     // 碎碎念气泡（独立于余额气泡：文本气泡与余额行气泡互不干扰，各自 10s 显隐）
     const [whisperBubbleOn, setWhisperBubbleOn] = useState(false);
     const whisperBubbleTimerRef = useRef<number | null>(null);
+    // 静态图宠物点击姿态短暂展示后恢复 idle 的定时器（image 宠物专用）
+    const clickRestoreTimerRef = useRef<number | null>(null);
     // 碎碎念当前文本（本宠物独立生成的句子）
     const [whisperText, setWhisperText] = useState<string | null>(null);
     // 右键菜单（统一自绘组件）：当前挂载的 close() 句柄，卸载/重开前清理
@@ -168,6 +180,8 @@ export function makePetUI(rt: {
     const stageRef = useRef<HTMLDivElement | null>(null);
     const videoARef = useRef<HTMLVideoElement | null>(null);
     const videoBRef = useRef<HTMLVideoElement | null>(null);
+    const imgARef = useRef<HTMLImageElement | null>(null);
+    const imgBRef = useRef<HTMLImageElement | null>(null);
     const frontRef = useRef(0);
     const pendingRef = useRef<null | { anim: string; once: boolean; gen: number }>(null);
     const genRef = useRef(0);
@@ -195,6 +209,11 @@ export function makePetUI(rt: {
 
     const switchTo = (next: string, nextOnce: boolean) => {
       if (!next) return;
+      // 静态图宠物：走图像交叉淡入（无 video 生命周期），其余逻辑（点击/拖拽/气泡）与视频宠物一致
+      if (media === 'image') {
+        switchImage(next);
+        return;
+      }
       const pending = pendingRef.current;
       if (pending && pending.anim === next && pending.once === nextOnce) {
         // 防重命中（单动画点击时目标=当前动画，不重播）：仍消费 Q 弹标记，压当前前台视频，
@@ -250,6 +269,38 @@ export function makePetUI(rt: {
       if (el.readyState >= 2) onReady();
     };
 
+    /** 静态图宠物：双 <img> 交叉淡入（与视频双缓冲同构）。所有姿态共享同一固定 stage（size × aspect），
+     *  object-fit:contain + 归一化画布 → 切换只换戏内 asset，绝不跳尺寸/位置/闪屏；CSS translate 微动自带呼吸。 */
+    const switchImage = (next: string) => {
+      if (!next) return;
+      const base =
+        '/dsh-pet-7340/thumb/' + encodeURIComponent(cfg.assetRoot ?? cfg.id) + '/' + encodeURIComponent(next) + '.png';
+      const target = frontRef.current === 0 ? imgBRef : imgARef;
+      const el = target.current;
+      if (!el) return;
+      if (el.getAttribute('data-anim') === next) return; // 已在该状态：不重载
+      el.setAttribute('data-anim', next);
+      const onReady = () => {
+        el.removeEventListener('load', onReady);
+        const old = frontRef.current === 0 ? imgARef : imgBRef;
+        el.classList.add('is-front');
+        if (old.current && old.current !== el) old.current.classList.remove('is-front');
+        frontRef.current = frontRef.current === 0 ? 1 : 0;
+        el.style.transform = facingRef.current === 'right' ? 'scaleX(-1)' : '';
+        if (pendingSquashRef.current) {
+          pendingSquashRef.current = false;
+          startSquash(el);
+        }
+      };
+      if (el.getAttribute('data-src') === base && el.complete) {
+        onReady(); // 同源已加载：立即切（无等待/闪白）
+        return;
+      }
+      el.setAttribute('data-src', base);
+      el.src = base;
+      el.addEventListener('load', onReady);
+    };
+
     // ---- 状态驱动播放 ----
     useEffect(() => {
       switchTo(anim, once);
@@ -268,6 +319,7 @@ export function makePetUI(rt: {
       () => () => {
         if (bubbleTimerRef.current !== null) window.clearTimeout(bubbleTimerRef.current);
         if (whisperBubbleTimerRef.current !== null) window.clearTimeout(whisperBubbleTimerRef.current);
+        if (clickRestoreTimerRef.current !== null) window.clearTimeout(clickRestoreTimerRef.current);
       },
       [],
     );
@@ -321,9 +373,16 @@ export function makePetUI(rt: {
       );
       stopMove();
       setBubbleOn(true);
-      // 气泡 10s 定时消失（与动画解耦：即使动画被点击/拖拽打断，气泡也按时收起；重复触发先清旧定时器）
+      // 气泡 10s 定时消失（与动画解耦：即使动画被点击/拖拽打断，气泡也按时收起；重复触发先清旧定时器）。
+      // 静态图宠物无 ended 生命周期：气泡结束时状态回 idle 池。
       if (bubbleTimerRef.current !== null) window.clearTimeout(bubbleTimerRef.current);
-      bubbleTimerRef.current = window.setTimeout(() => setBubbleOn(false), BUBBLE_DURATION_MS);
+      bubbleTimerRef.current = window.setTimeout(() => {
+        setBubbleOn(false);
+        if (media === 'image' && petAnims.idle.length) {
+          setOnce(true);
+          setAnim(pick(petAnims.idle, animRef.current));
+        }
+      }, BUBBLE_DURATION_MS);
       setOnce(true);
       setAnim(name);
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -435,9 +494,16 @@ export function makePetUI(rt: {
       stopMove();
       setWhisperText(text);
       setWhisperBubbleOn(true);
-      // 气泡 10s 定时消失（与动画解耦；重复触发先清旧定时器）
+      // 气泡 10s 定时消失（与动画解耦；重复触发先清旧定时器）。
+      // 静态图宠物无 ended：气泡结束时状态回 idle 池。
       if (whisperBubbleTimerRef.current !== null) window.clearTimeout(whisperBubbleTimerRef.current);
-      whisperBubbleTimerRef.current = window.setTimeout(() => setWhisperBubbleOn(false), BUBBLE_DURATION_MS);
+      whisperBubbleTimerRef.current = window.setTimeout(() => {
+        setWhisperBubbleOn(false);
+        if (media === 'image' && petAnims.idle.length) {
+          setOnce(true);
+          setAnim(pick(petAnims.idle, animRef.current));
+        }
+      }, BUBBLE_DURATION_MS);
       setOnce(true);
       setAnim(name);
     };
@@ -819,7 +885,7 @@ export function makePetUI(rt: {
     /** Q 弹挤压：前台视频垂直压扁（贴地锚定，transform-origin:bottom）再回弹；
      *  与桌面同构，曲线在 shared（squashScale）。depth = 下压幅度（点击固定 0.55；
      *  落地按冲击速度 landingSquash 动态取）。reduce-motion 时跳过。 */
-    const startSquash = (el: HTMLVideoElement, depth: number = SQ_SQUASH) => {
+    const startSquash = (el: HTMLElement, depth: number = SQ_SQUASH) => {
       if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
       const token = ++squashTokenRef.current;
       if (squashRef.current !== null) cancelAnimationFrame(squashRef.current);
@@ -1007,6 +1073,14 @@ export function makePetUI(rt: {
       // 递增 seq 强制 switchTo 走一遍（防重分支负责在动画相同时消费 Q 弹标记）
       setSeq((s) => s + 1);
       setAnim(name);
+      // 静态图宠物无 ended：点击姿态短暂展示（约 400ms）后恢复原状态
+      if (media === 'image' && petAnims.idle.length) {
+        if (clickRestoreTimerRef.current !== null) window.clearTimeout(clickRestoreTimerRef.current);
+        clickRestoreTimerRef.current = window.setTimeout(() => {
+          setOnce(true);
+          setAnim(pick(petAnims.idle, animRef.current));
+        }, 400);
+      }
     };
 
     // ---- 右键菜单（统一自绘组件：树 + 渲染 + 样式与桌面共用 src/shared/menu.ts） ----
@@ -1128,6 +1202,10 @@ export function makePetUI(rt: {
         })()
       : {};
     const commonVideoProps = { muted: true, playsInline: true, autoPlay: true, title: cfg.name };
+    // 静态图宠物的素材 URL 构造器 + 前台 img 初始 idle src（避免首帧空白）
+    const imgAssetUrl = (name: string): string =>
+      '/dsh-pet-7340/thumb/' + encodeURIComponent(cfg.assetRoot ?? cfg.id) + '/' + encodeURIComponent(name) + '.png';
+    const idleImgSrc = media === 'image' && cfg.animations?.idle?.[0] ? imgAssetUrl(cfg.animations.idle[0]) : '';
     const hitProps = {
       className: 'dsh-pet-hit',
       style: {
@@ -1165,8 +1243,26 @@ export function makePetUI(rt: {
           className: 'dsh-pet-stage',
           style: stageStyle,
           children: [
-            h('video', Object.assign({}, commonVideoProps, { ref: videoARef, className: 'dsh-pet-video is-front' })),
-            h('video', Object.assign({}, commonVideoProps, { ref: videoBRef, className: 'dsh-pet-video' })),
+            ...(media === 'image'
+              ? [
+                  h('img', {
+                    ref: imgARef,
+                    className: 'dsh-pet-img is-front',
+                    title: cfg.name,
+                    src: idleImgSrc,
+                    draggable: false,
+                  }),
+                  h('img', {
+                    ref: imgBRef,
+                    className: 'dsh-pet-img',
+                    title: cfg.name,
+                    draggable: false,
+                  }),
+                ]
+              : [
+                  h('video', Object.assign({}, commonVideoProps, { ref: videoARef, className: 'dsh-pet-video is-front' })),
+                  h('video', Object.assign({}, commonVideoProps, { ref: videoBRef, className: 'dsh-pet-video' })),
+                ]),
             h('div', hitProps),
           ],
         }),
@@ -1218,10 +1314,10 @@ export function makePetUI(rt: {
             const mc = mainConfRef.current;
             const filled: Pet[] = list.map((p) => ({
               ...p,
-              animations: mc.animations as Animations,
-              animationWeights: mc.animationWeights as Weights,
+              animations: (p.animations ?? mc.animations) as Animations,
+              animationWeights: (p.animationWeights ?? mc.animationWeights) as Weights,
               eventsRefreshSec: mc.eventsRefreshSec as Record<string, number>,
-              assetRoot: 'main',
+              assetRoot: p.assetRoot ?? 'main',
               extra: false,
             }));
             const next = [...filled, ...extrasRef.current];
